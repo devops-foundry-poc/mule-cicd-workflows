@@ -1,0 +1,147 @@
+# Reusable workflow: strip -SNAPSHOT from pom.xml version, build, and publish to
+# Anypoint Exchange.  Optionally uploads the built Mule application JAR as a
+# GitHub Actions artifact so downstream deploy workflows can promote the same binary.
+#
+# Security notes:
+#   - Triggered only via workflow_call (never pull_request or pull_request_target).
+#   - All secrets are passed explicitly by the caller.
+#   - No write permissions beyond the implicit GITHUB_TOKEN for artifact upload.
+name: Exchange Publish (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      bg_id:
+        description: 'Anypoint Business Group UUID (must match pom.xml <groupId> or the deploy org).'
+        type: string
+        required: true
+      java_version:
+        description: 'JDK version for the build'
+        type: string
+        default: '17'
+      upload_artifact:
+        description: 'Upload the built Mule JAR as a GitHub Actions artifact for binary promotion.'
+        type: boolean
+        default: true
+      artifact_name:
+        description: 'Name for the uploaded GitHub Actions artifact.'
+        type: string
+        default: 'mule-app'
+    secrets:
+      connected_app_client_id:
+        required: true
+      connected_app_client_secret:
+        required: true
+      mulesoft_ee_username:
+        required: false
+      mulesoft_ee_password:
+        required: false
+    outputs:
+      release_version:
+        description: 'The published release version (SNAPSHOT suffix stripped).'
+        value: ${{ jobs.publish.outputs.release_version }}
+      artifact_id:
+        description: 'Maven artifactId of the published asset.'
+        value: ${{ jobs.publish.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Strip SNAPSHOT → publish to Exchange
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+      artifact_id: ${{ steps.version.outputs.artifact_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java ${{ inputs.java_version }}
+        # TODO: pin to SHA — gh release view v4 -R actions/setup-java --json tagName
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Configure Maven — Exchange + MuleSoft EE repositories
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.connected_app_client_id }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.connected_app_client_secret }}
+          MULESOFT_EE_USERNAME: ${{ secrets.mulesoft_ee_username }}
+          MULESOFT_EE_PASSWORD: ${{ secrets.mulesoft_ee_password }}
+        run: |
+          mkdir -p "$HOME/.m2"
+          python3 - << 'PYEOF'
+          import os
+
+          cid  = os.environ.get("EXCHANGE_CLIENT_ID", "")
+          csec = os.environ.get("EXCHANGE_CLIENT_SECRET", "")
+          ee_u = os.environ.get("MULESOFT_EE_USERNAME", "__FILL_ME_EE_USERNAME__")
+          ee_p = os.environ.get("MULESOFT_EE_PASSWORD", "__FILL_ME_EE_PASSWORD__")
+
+          exchange_password = f"{cid}~?~{csec}"
+
+          settings = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>anypoint-exchange-v3</id>
+                <username>~~~Client~~~</username>
+                <password>{exchange_password}</password>
+              </server>
+              <server>
+                <id>mulesoft-ee-releases</id>
+                <username>{ee_u}</username>
+                <password>{ee_p}</password>
+              </server>
+            </servers>
+          </settings>"""
+
+          with open(os.path.expanduser("~/.m2/settings.xml"), "w") as f:
+              f.write(settings)
+          PYEOF
+
+      - name: Resolve release version (strip -SNAPSHOT)
+        id: version
+        run: |
+          RAW_VERSION=$(mvn help:evaluate \
+            -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          RELEASE_VERSION="${RAW_VERSION%-SNAPSHOT}"
+          ARTIFACT_ID=$(mvn help:evaluate \
+            -Dexpression=project.artifactId -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=${ARTIFACT_ID}"         >> "$GITHUB_OUTPUT"
+          echo "Release version: ${RELEASE_VERSION}"
+
+      - name: Set POM version to release (no backup files)
+        run: |
+          mvn versions:set \
+            -DnewVersion="${{ steps.version.outputs.release_version }}" \
+            -DgenerateBackupFiles=false \
+            --no-transfer-progress --batch-mode
+
+      - name: Build and publish to Exchange
+        run: |
+          mvn deploy -P deploy-to-exchange-v3 \
+            -DorganizationId="${{ inputs.bg_id }}" \
+            --no-transfer-progress --batch-mode
+        # -DorganizationId overrides the POM groupId so the asset lands in the
+        # correct Anypoint Business Group regardless of the build groupId.
+
+      - name: Upload Mule JAR as GitHub Actions artifact (binary promotion)
+        if: ${{ inputs.upload_artifact }}
+        # TODO: pin to SHA — gh release view v4 -R actions/upload-artifact --json tagName
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          # Mule Maven plugin packages to target/<artifactId>-<version>-mule-application.jar
+          path: |
+            target/*-mule-application.jar
+          if-no-files-found: warn
+          retention-days: 7

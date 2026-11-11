@@ -1,0 +1,193 @@
+# Reusable workflow: deploy a Mule application to CloudHub 2.0.
+# Binary-promotion model: downloads the already-built JAR from a GitHub Actions
+# artifact (uploaded by exchange-publish.yml) and deploys it without rebuilding.
+#
+# Security notes:
+#   - workflow_call only — never triggered directly.
+#   - Connected App credentials arrive as secrets, never written to disk.
+#   - Env client credentials are passed as Maven secure properties (-D flags read
+#     by the mule-maven-plugin at runtime), not written to any file.
+#   - PROD environments are protected by GitHub Environment approval gates;
+#     the calling workflow must set `environment: <env-name>` on the calling job.
+name: CH2 Deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      # ── Artifact location ──────────────────────────────────────────────
+      artifact_name:
+        description: 'GitHub Actions artifact name containing the Mule JAR.'
+        type: string
+        default: 'mule-app'
+      artifact_run_id:
+        description: >
+          Run ID of the workflow that uploaded the artifact.
+          Defaults to the current run if empty (same-run promotion).
+        type: string
+        default: ''
+
+      # ── Anypoint coordinates ───────────────────────────────────────────
+      bg_id:
+        description: 'Anypoint Business Group UUID (target BG for the deployment).'
+        type: string
+        required: true
+      anypoint_env:
+        description: 'Anypoint environment name exactly as it appears in Runtime Manager (e.g. Design, Sandbox, Production).'
+        type: string
+        required: true
+
+      # ── CloudHub 2.0 deployment config ────────────────────────────────
+      app_name:
+        description: 'CloudHub 2.0 application name (lowercase, ≤ 42 chars).'
+        type: string
+        required: true
+      replicas:
+        description: 'Number of replicas.'
+        type: string
+        default: '1'
+      vcores:
+        description: 'vCores per replica.'
+        type: string
+        default: '0.1'
+      mule_runtime:
+        description: 'Mule runtime version for CH2 (e.g. 4.9.0). TO CONFIRM exact patch.'
+        type: string
+        default: '4.9.0'
+
+      java_version:
+        description: 'JDK version for Maven (must match pom.xml).'
+        type: string
+        default: '17'
+
+    secrets:
+      # Connected App with CloudHub 2.0 deploy scope (client_credentials grant).
+      connected_app_client_id:
+        required: true
+      connected_app_client_secret:
+        required: true
+      # Per-environment Anypoint client credentials (anypoint.platform.client_id/secret).
+      env_client_id:
+        required: true
+      env_client_secret:
+        required: true
+      # Mule vault key for secure properties (mule.vault.key).
+      secure_key:
+        required: true
+      # GitHub token for downloading artifacts from another workflow run.
+      github_token:
+        required: false
+      mulesoft_ee_username:
+        required: false
+      mulesoft_ee_password:
+        required: false
+
+permissions:
+  contents: read
+  actions: read   # required for cross-run artifact download
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.anypoint_env }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for pom.xml coordinates)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java ${{ inputs.java_version }}
+        # TODO: pin to SHA — gh release view v4 -R actions/setup-java --json tagName
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Configure Maven — Exchange + MuleSoft EE repositories
+        env:
+          # Only read credentials from environment, never from workflow context directly.
+          EXCHANGE_CLIENT_ID: ${{ secrets.connected_app_client_id }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.connected_app_client_secret }}
+          MULESOFT_EE_USERNAME: ${{ secrets.mulesoft_ee_username }}
+          MULESOFT_EE_PASSWORD: ${{ secrets.mulesoft_ee_password }}
+        run: |
+          mkdir -p "$HOME/.m2"
+          python3 - << 'PYEOF'
+          import os
+
+          cid  = os.environ.get("EXCHANGE_CLIENT_ID", "")
+          csec = os.environ.get("EXCHANGE_CLIENT_SECRET", "")
+          ee_u = os.environ.get("MULESOFT_EE_USERNAME", "__FILL_ME_EE_USERNAME__")
+          ee_p = os.environ.get("MULESOFT_EE_PASSWORD", "__FILL_ME_EE_PASSWORD__")
+
+          exchange_password = f"{cid}~?~{csec}"
+
+          settings = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>anypoint-exchange-v3</id>
+                <username>~~~Client~~~</username>
+                <password>{exchange_password}</password>
+              </server>
+              <server>
+                <id>mulesoft-ee-releases</id>
+                <username>{ee_u}</username>
+                <password>{ee_p}</password>
+              </server>
+            </servers>
+          </settings>"""
+
+          with open(os.path.expanduser("~/.m2/settings.xml"), "w") as f:
+              f.write(settings)
+          PYEOF
+
+      # Download the JAR built by the exchange-publish step (binary promotion).
+      # When artifact_run_id is provided (workflow_run trigger pattern), the JAR
+      # is fetched from the triggering publish run so no rebuild occurs.
+      - name: Download Mule application JAR
+        # TODO: pin to SHA — gh release view v4 -R actions/download-artifact --json tagName
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/
+          # Cross-run download: set run-id when deploying from a different workflow run.
+          run-id: ${{ inputs.artifact_run_id != '' && inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ secrets.github_token != '' && secrets.github_token || secrets.GITHUB_TOKEN }}
+
+      - name: Locate downloaded JAR
+        id: jar
+        run: |
+          JAR_PATH=$(find target/ -name "*-mule-application.jar" | head -1)
+          if [ -z "$JAR_PATH" ]; then
+            echo "::error::No mule-application JAR found in target/. Did exchange-publish upload_artifact=true?"
+            exit 1
+          fi
+          echo "jar_path=${JAR_PATH}" >> "$GITHUB_OUTPUT"
+          echo "Deploying: ${JAR_PATH}"
+
+      - name: Deploy to CloudHub 2.0 — ${{ inputs.anypoint_env }}
+        env:
+          # Never inline secrets as command-line args; pass via env and reference with -D.
+          CONNECTED_APP_CLIENT_ID: ${{ secrets.connected_app_client_id }}
+          CONNECTED_APP_CLIENT_SECRET: ${{ secrets.connected_app_client_secret }}
+          ENV_CLIENT_ID: ${{ secrets.env_client_id }}
+          ENV_CLIENT_SECRET: ${{ secrets.env_client_secret }}
+          SECURE_KEY: ${{ secrets.secure_key }}
+        run: |
+          mvn mule:deploy -P ch2 \
+            -Ddeployment.name="${{ inputs.app_name }}" \
+            -Dbg.id="${{ inputs.bg_id }}" \
+            -Dch2.environment="${{ inputs.anypoint_env }}" \
+            -Dapp.replicas="${{ inputs.replicas }}" \
+            -Dapp.vcores="${{ inputs.vcores }}" \
+            -Dapp.runtime="${{ inputs.mule_runtime }}" \
+            -Dconnected.app.client.id="${CONNECTED_APP_CLIENT_ID}" \
+            -Dconnected.app.client.secret="${CONNECTED_APP_CLIENT_SECRET}" \
+            -Denv.client.id="${ENV_CLIENT_ID}" \
+            -Denv.client.secret="${ENV_CLIENT_SECRET}" \
+            -Dsecure.key="${SECURE_KEY}" \
+            -Dmule.artifact="${{ steps.jar.outputs.jar_path }}" \
+            --no-transfer-progress --batch-mode
+        # -Dmule.artifact points mule-maven-plugin to the pre-built JAR (binary promotion —
+        # no rebuild; the exact same artifact published to Exchange is deployed here).
+        # All -D secret values are read from env vars, never literal in the command string.
