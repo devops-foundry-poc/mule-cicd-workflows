@@ -73,6 +73,7 @@ jobs:
         with:
           exchange_client_id: ${{ secrets.connected_app_client_id }}
           exchange_client_secret: ${{ secrets.connected_app_client_secret }}
+          github_token: ${{ github.token }}
 
       - name: Resolve coordinates from pom.xml
         id: version
