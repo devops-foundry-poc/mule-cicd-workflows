@@ -103,43 +103,12 @@ jobs:
           cache: maven
 
       - name: Configure Maven — Exchange + MuleSoft EE repositories
-        env:
-          # Only read credentials from environment, never from workflow context directly.
-          EXCHANGE_CLIENT_ID: ${{ secrets.connected_app_client_id }}
-          EXCHANGE_CLIENT_SECRET: ${{ secrets.connected_app_client_secret }}
-          MULESOFT_EE_USERNAME: ${{ secrets.mulesoft_ee_username }}
-          MULESOFT_EE_PASSWORD: ${{ secrets.mulesoft_ee_password }}
-        run: |
-          mkdir -p "$HOME/.m2"
-          python3 - << 'PYEOF'
-          import os
-
-          cid  = os.environ.get("EXCHANGE_CLIENT_ID", "")
-          csec = os.environ.get("EXCHANGE_CLIENT_SECRET", "")
-          ee_u = os.environ.get("MULESOFT_EE_USERNAME", "__FILL_ME_EE_USERNAME__")
-          ee_p = os.environ.get("MULESOFT_EE_PASSWORD", "__FILL_ME_EE_PASSWORD__")
-
-          exchange_password = f"{cid}~?~{csec}"
-
-          settings = f"""<?xml version="1.0" encoding="UTF-8"?>
-          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-            <servers>
-              <server>
-                <id>anypoint-exchange-v3</id>
-                <username>~~~Client~~~</username>
-                <password>{exchange_password}</password>
-              </server>
-              <server>
-                <id>mulesoft-ee-releases</id>
-                <username>{ee_u}</username>
-                <password>{ee_p}</password>
-              </server>
-            </servers>
-          </settings>"""
-
-          with open(os.path.expanduser("~/.m2/settings.xml"), "w") as f:
-              f.write(settings)
-          PYEOF
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.connected_app_client_id }}
+          exchange_client_secret: ${{ secrets.connected_app_client_secret }}
+          mulesoft_ee_username: ${{ secrets.mulesoft_ee_username }}
+          mulesoft_ee_password: ${{ secrets.mulesoft_ee_password }}
 
       # Download the JAR built by the exchange-publish step (binary promotion).
       # When artifact_run_id is provided (workflow_run trigger pattern), the JAR

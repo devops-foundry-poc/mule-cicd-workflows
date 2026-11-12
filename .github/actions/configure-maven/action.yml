@@ -1,0 +1,66 @@
+# Composite action: write ~/.m2/settings.xml for Anypoint Exchange + MuleSoft EE.
+# Called by every workflow that needs Maven to resolve or publish to Exchange.
+#
+# Security: inputs carrying secrets are never echoed; GitHub masks any value
+# that originated from a secrets.* context, even when passed through inputs.
+name: Configure Maven for Anypoint Exchange
+description: >
+  Writes ~/.m2/settings.xml with credentials for Anypoint Exchange V3 and
+  MuleSoft EE Nexus. Credentials are injected via env vars (never echoed).
+
+inputs:
+  exchange_client_id:
+    description: 'Connected App client ID (Exchange Viewer or Contributor scope).'
+    required: true
+  exchange_client_secret:
+    description: 'Connected App client secret.'
+    required: true
+  mulesoft_ee_username:
+    description: 'MuleSoft EE Nexus username (from Salesforce service request). Leave blank to use placeholder.'
+    required: false
+    default: '__FILL_ME_EE_USERNAME__'
+  mulesoft_ee_password:
+    description: 'MuleSoft EE Nexus password. Leave blank to use placeholder.'
+    required: false
+    default: '__FILL_ME_EE_PASSWORD__'
+
+runs:
+  using: composite
+  steps:
+    - name: Write Maven settings
+      shell: python3 {0}
+      env:
+        EXCHANGE_CLIENT_ID: ${{ inputs.exchange_client_id }}
+        EXCHANGE_CLIENT_SECRET: ${{ inputs.exchange_client_secret }}
+        MULESOFT_EE_USERNAME: ${{ inputs.mulesoft_ee_username }}
+        MULESOFT_EE_PASSWORD: ${{ inputs.mulesoft_ee_password }}
+      run: |
+        import os
+
+        cid  = os.environ["EXCHANGE_CLIENT_ID"]
+        csec = os.environ["EXCHANGE_CLIENT_SECRET"]
+        ee_u = os.environ["MULESOFT_EE_USERNAME"]
+        ee_p = os.environ["MULESOFT_EE_PASSWORD"]
+
+        # Exchange password format: <client_id>~?~<client_secret>
+        exchange_password = f"{cid}~?~{csec}"
+
+        settings = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+          <servers>
+            <server>
+              <id>anypoint-exchange-v3</id>
+              <username>~~~Client~~~</username>
+              <password>{exchange_password}</password>
+            </server>
+            <server>
+              <id>mulesoft-ee-releases</id>
+              <username>{ee_u}</username>
+              <password>{ee_p}</password>
+            </server>
+          </servers>
+        </settings>"""
+
+        os.makedirs(os.path.expanduser("~/.m2"), exist_ok=True)
+        with open(os.path.expanduser("~/.m2/settings.xml"), "w") as f:
+            f.write(settings)
