@@ -15,6 +15,14 @@ on:
         description: 'JDK version for the build'
         type: string
         default: '17'
+      is_mule_app:
+        description: >
+          Set to true for Mule application repos (activates the deploy-to-exchange-v3 Maven
+          profile which runs exchange-mule-maven-plugin). Set to false for plain POM artifacts
+          (parent POMs, shared libraries) where standard Maven deploy is sufficient and the
+          Exchange plugin's Mule-asset validation would fail with HTTP 412.
+        type: boolean
+        default: true
       upload_artifact:
         description: 'Upload the built Mule JAR as a GitHub Actions artifact for binary promotion.'
         type: boolean
@@ -94,11 +102,21 @@ jobs:
 
       - name: Build and publish to Exchange
         run: |
-          mvn deploy -P deploy-to-exchange-v3 \
-            -DorganizationId="${{ steps.version.outputs.bg_id }}" \
-            --no-transfer-progress --batch-mode
-        # -DorganizationId is read from pom.xml project.groupId (the BG UUID).
-        # Single source of truth: change the groupId in pom.xml, the deploy target follows.
+          if [ "${{ inputs.is_mule_app }}" = "true" ]; then
+            # Mule application: activate the Exchange plugin profile so it validates
+            # and registers the asset metadata in Exchange.
+            mvn deploy -P deploy-to-exchange-v3 \
+              -DorganizationId="${{ steps.version.outputs.bg_id }}" \
+              --no-transfer-progress --batch-mode
+          else
+            # Plain POM (parent POM / shared library): standard Maven deploy to the
+            # Exchange Maven facade.  The exchange-mule-maven-plugin is not involved —
+            # it rejects non-Mule-application artifacts with HTTP 412.
+            mvn deploy \
+              --no-transfer-progress --batch-mode
+          fi
+        # distributionManagement in pom.xml already points to Exchange; the BG UUID
+        # in project.groupId drives the facade URL for plain deploys.
 
       - name: Upload Mule JAR as GitHub Actions artifact (binary promotion)
         if: ${{ inputs.upload_artifact }}
