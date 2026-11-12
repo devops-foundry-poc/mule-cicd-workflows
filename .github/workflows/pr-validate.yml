@@ -61,7 +61,7 @@ jobs:
 
       - name: Build (MUnit skipped)
         run: |
-          mvn verify \
+          $MVN verify \
             -Dmunit.test.skip=true \
             ${{ inputs.maven_args }} \
             --no-transfer-progress \
