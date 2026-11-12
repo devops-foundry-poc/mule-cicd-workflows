@@ -34,6 +34,7 @@ on:
 # Least-privilege: read-only for all jobs in this reusable workflow.
 permissions:
   contents: read
+  packages: read
 
 jobs:
   validate:
@@ -60,7 +61,7 @@ jobs:
 
       - name: Build (MUnit skipped)
         run: |
-          mvn verify \
+          $MVN verify \
             -Dmunit.test.skip=true \
             ${{ inputs.maven_args }} \
             --no-transfer-progress \

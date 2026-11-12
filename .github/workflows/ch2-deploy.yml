@@ -80,6 +80,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
   actions: read   # required for cross-run artifact download
 
 jobs:
@@ -139,7 +140,7 @@ jobs:
           ENV_CLIENT_SECRET: ${{ secrets.env_client_secret }}
           SECURE_KEY: ${{ secrets.secure_key }}
         run: |
-          mvn mule:deploy -P ch2 \
+          $MVN mule:deploy -P ch2 \
             -Ddeployment.name="${{ inputs.app_name }}" \
             -Dbg.id="${{ inputs.bg_id }}" \
             -Dch2.environment="${{ inputs.anypoint_env }}" \

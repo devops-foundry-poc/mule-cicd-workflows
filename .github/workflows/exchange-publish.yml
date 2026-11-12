@@ -47,6 +47,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   publish:
@@ -78,15 +79,15 @@ jobs:
       - name: Resolve coordinates from pom.xml
         id: version
         run: |
-          RAW_VERSION=$(mvn help:evaluate \
+          RAW_VERSION=$($MVN help:evaluate \
             -Dexpression=project.version -q -DforceStdout \
             --no-transfer-progress --batch-mode)
           RELEASE_VERSION="${RAW_VERSION%-SNAPSHOT}"
-          ARTIFACT_ID=$(mvn help:evaluate \
+          ARTIFACT_ID=$($MVN help:evaluate \
             -Dexpression=project.artifactId -q -DforceStdout \
             --no-transfer-progress --batch-mode)
           # groupId == Anypoint BG UUID in pom.xml — no need to pass it from the caller.
-          GROUP_ID=$(mvn help:evaluate \
+          GROUP_ID=$($MVN help:evaluate \
             -Dexpression=project.groupId -q -DforceStdout \
             --no-transfer-progress --batch-mode)
           echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
@@ -96,7 +97,7 @@ jobs:
 
       - name: Set POM version to release (no backup files)
         run: |
-          mvn versions:set \
+          $MVN versions:set \
             -DnewVersion="${{ steps.version.outputs.release_version }}" \
             -DgenerateBackupFiles=false \
             --no-transfer-progress --batch-mode
@@ -106,14 +107,14 @@ jobs:
           if [ "${{ inputs.is_mule_app }}" = "true" ]; then
             # Mule application: activate the Exchange plugin profile so it validates
             # and registers the asset metadata in Exchange.
-            mvn deploy -P deploy-to-exchange-v3 \
+            $MVN deploy -P deploy-to-exchange-v3 \
               -DorganizationId="${{ steps.version.outputs.bg_id }}" \
               --no-transfer-progress --batch-mode
           else
             # Plain POM (parent POM / shared library): standard Maven deploy to the
             # Exchange Maven facade.  The exchange-mule-maven-plugin is not involved —
             # it rejects non-Mule-application artifacts with HTTP 412.
-            mvn deploy \
+            $MVN deploy \
               --no-transfer-progress --batch-mode
           fi
         # distributionManagement in pom.xml already points to Exchange; the BG UUID

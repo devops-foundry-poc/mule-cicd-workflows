@@ -30,6 +30,27 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install Maven 3.8.8 and export MVN variable
+      shell: bash
+      run: |
+        # mule-maven-plugin 4.x uses maven-resolver 1.x which is incompatible with
+        # Maven 3.9.x (maven-resolver 2.x, breaking DefaultMirrorSelector API change).
+        # Export MVN pointing to 3.8.8 so callers use `$MVN` instead of bare `mvn`.
+        # Using $GITHUB_ENV (not PATH) to guarantee the variable reaches calling workflows.
+        MVN_VERSION="3.8.8"
+        MVN_HOME="${HOME}/.local/apache-maven-${MVN_VERSION}"
+        if [ ! -d "${MVN_HOME}" ]; then
+          echo "Downloading Maven ${MVN_VERSION}..."
+          wget -q \
+            "https://archive.apache.org/dist/maven/maven-3/${MVN_VERSION}/binaries/apache-maven-${MVN_VERSION}-bin.tar.gz" \
+            -O /tmp/maven.tar.gz
+          mkdir -p "${HOME}/.local"
+          tar -xzf /tmp/maven.tar.gz -C "${HOME}/.local/"
+          rm /tmp/maven.tar.gz
+        fi
+        echo "MVN=${MVN_HOME}/bin/mvn" >> "$GITHUB_ENV"
+        echo "Maven ${MVN_VERSION} ready at ${MVN_HOME}/bin/mvn"
+
     - name: Write Maven settings
       shell: python3 {0}
       env:
