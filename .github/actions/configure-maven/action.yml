@@ -15,14 +15,9 @@ inputs:
   exchange_client_secret:
     description: 'Connected App client secret.'
     required: true
-  mulesoft_ee_username:
-    description: 'MuleSoft EE Nexus username (from Salesforce service request). Leave blank to use placeholder.'
-    required: false
-    default: '__FILL_ME_EE_USERNAME__'
-  mulesoft_ee_password:
-    description: 'MuleSoft EE Nexus password. Leave blank to use placeholder.'
-    required: false
-    default: '__FILL_ME_EE_PASSWORD__'
+  # MuleSoft EE Nexus credentials — reserved for future use when an EE licence is available.
+  # Add mulesoft_ee_username / mulesoft_ee_password inputs here and a matching <server> block
+  # in the settings below once the credentials are obtained via Salesforce service request.
 
 runs:
   using: composite
@@ -32,15 +27,11 @@ runs:
       env:
         EXCHANGE_CLIENT_ID: ${{ inputs.exchange_client_id }}
         EXCHANGE_CLIENT_SECRET: ${{ inputs.exchange_client_secret }}
-        MULESOFT_EE_USERNAME: ${{ inputs.mulesoft_ee_username }}
-        MULESOFT_EE_PASSWORD: ${{ inputs.mulesoft_ee_password }}
       run: |
         import os
 
         cid  = os.environ["EXCHANGE_CLIENT_ID"]
         csec = os.environ["EXCHANGE_CLIENT_SECRET"]
-        ee_u = os.environ["MULESOFT_EE_USERNAME"]
-        ee_p = os.environ["MULESOFT_EE_PASSWORD"]
 
         # Exchange password format: <client_id>~?~<client_secret>
         exchange_password = f"{cid}~?~{csec}"
@@ -53,11 +44,7 @@ runs:
               <username>~~~Client~~~</username>
               <password>{exchange_password}</password>
             </server>
-            <server>
-              <id>mulesoft-ee-releases</id>
-              <username>{ee_u}</username>
-              <password>{ee_p}</password>
-            </server>
+            <!-- mulesoft-ee-releases: add <server> here when EE licence is available -->
           </servers>
         </settings>"""
 

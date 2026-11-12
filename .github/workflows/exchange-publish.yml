@@ -28,10 +28,7 @@ on:
         required: true
       connected_app_client_secret:
         required: true
-      mulesoft_ee_username:
-        required: false
-      mulesoft_ee_password:
-        required: false
+      # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available
     outputs:
       release_version:
         description: 'The published release version (SNAPSHOT suffix stripped).'
@@ -68,8 +65,6 @@ jobs:
         with:
           exchange_client_id: ${{ secrets.connected_app_client_id }}
           exchange_client_secret: ${{ secrets.connected_app_client_secret }}
-          mulesoft_ee_username: ${{ secrets.mulesoft_ee_username }}
-          mulesoft_ee_password: ${{ secrets.mulesoft_ee_password }}
 
       - name: Resolve coordinates from pom.xml
         id: version

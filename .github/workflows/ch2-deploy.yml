@@ -76,10 +76,7 @@ on:
       # GitHub token for downloading artifacts from another workflow run.
       github_token:
         required: false
-      mulesoft_ee_username:
-        required: false
-      mulesoft_ee_password:
-        required: false
+      # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available
 
 permissions:
   contents: read
@@ -107,8 +104,6 @@ jobs:
         with:
           exchange_client_id: ${{ secrets.connected_app_client_id }}
           exchange_client_secret: ${{ secrets.connected_app_client_secret }}
-          mulesoft_ee_username: ${{ secrets.mulesoft_ee_username }}
-          mulesoft_ee_password: ${{ secrets.mulesoft_ee_password }}
 
       # Download the JAR built by the exchange-publish step (binary promotion).
       # When artifact_run_id is provided (workflow_run trigger pattern), the JAR
