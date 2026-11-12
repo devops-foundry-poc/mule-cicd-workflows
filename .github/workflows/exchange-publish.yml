@@ -11,10 +11,6 @@ name: Exchange Publish (reusable)
 on:
   workflow_call:
     inputs:
-      bg_id:
-        description: 'Anypoint Business Group UUID (must match pom.xml <groupId> or the deploy org).'
-        type: string
-        required: true
       java_version:
         description: 'JDK version for the build'
         type: string
@@ -105,7 +101,7 @@ jobs:
               f.write(settings)
           PYEOF
 
-      - name: Resolve release version (strip -SNAPSHOT)
+      - name: Resolve coordinates from pom.xml
         id: version
         run: |
           RAW_VERSION=$(mvn help:evaluate \
@@ -115,9 +111,14 @@ jobs:
           ARTIFACT_ID=$(mvn help:evaluate \
             -Dexpression=project.artifactId -q -DforceStdout \
             --no-transfer-progress --batch-mode)
+          # groupId == Anypoint BG UUID in pom.xml — no need to pass it from the caller.
+          GROUP_ID=$(mvn help:evaluate \
+            -Dexpression=project.groupId -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
           echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "artifact_id=${ARTIFACT_ID}"         >> "$GITHUB_OUTPUT"
-          echo "Release version: ${RELEASE_VERSION}"
+          echo "bg_id=${GROUP_ID}"                  >> "$GITHUB_OUTPUT"
+          echo "Release version: ${RELEASE_VERSION}, BG: ${GROUP_ID}"
 
       - name: Set POM version to release (no backup files)
         run: |
@@ -129,10 +130,10 @@ jobs:
       - name: Build and publish to Exchange
         run: |
           mvn deploy -P deploy-to-exchange-v3 \
-            -DorganizationId="${{ inputs.bg_id }}" \
+            -DorganizationId="${{ steps.version.outputs.bg_id }}" \
             --no-transfer-progress --batch-mode
-        # -DorganizationId overrides the POM groupId so the asset lands in the
-        # correct Anypoint Business Group regardless of the build groupId.
+        # -DorganizationId is read from pom.xml project.groupId (the BG UUID).
+        # Single source of truth: change the groupId in pom.xml, the deploy target follows.
 
       - name: Upload Mule JAR as GitHub Actions artifact (binary promotion)
         if: ${{ inputs.upload_artifact }}
