@@ -74,7 +74,7 @@ on:
       secure_key:
         required: true
       # GitHub token for downloading artifacts from another workflow run.
-      github_token:
+      gh_token:
         required: false
       # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available
 
@@ -118,7 +118,7 @@ jobs:
           path: target/
           # Cross-run download: set run-id when deploying from a different workflow run.
           run-id: ${{ inputs.artifact_run_id != '' && inputs.artifact_run_id || github.run_id }}
-          github-token: ${{ secrets.github_token != '' && secrets.github_token || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.gh_token != '' && secrets.gh_token || secrets.GITHUB_TOKEN }}
 
       - name: Locate downloaded JAR
         id: jar
