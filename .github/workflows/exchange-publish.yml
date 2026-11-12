@@ -1,0 +1,113 @@
+# Reusable workflow: strip -SNAPSHOT from pom.xml version, build, and publish to
+# Anypoint Exchange.  Optionally uploads the built Mule application JAR as a
+# GitHub Actions artifact so downstream deploy workflows can promote the same binary.
+#
+# Security notes:
+#   - Triggered only via workflow_call (never pull_request or pull_request_target).
+#   - All secrets are passed explicitly by the caller.
+#   - No write permissions beyond the implicit GITHUB_TOKEN for artifact upload.
+name: Exchange Publish (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        description: 'JDK version for the build'
+        type: string
+        default: '17'
+      upload_artifact:
+        description: 'Upload the built Mule JAR as a GitHub Actions artifact for binary promotion.'
+        type: boolean
+        default: true
+      artifact_name:
+        description: 'Name for the uploaded GitHub Actions artifact.'
+        type: string
+        default: 'mule-app'
+    secrets:
+      connected_app_client_id:
+        required: true
+      connected_app_client_secret:
+        required: true
+      # mulesoft_ee_username / mulesoft_ee_password — add when EE licence available
+    outputs:
+      release_version:
+        description: 'The published release version (SNAPSHOT suffix stripped).'
+        value: ${{ jobs.publish.outputs.release_version }}
+      artifact_id:
+        description: 'Maven artifactId of the published asset.'
+        value: ${{ jobs.publish.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Strip SNAPSHOT → publish to Exchange
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+      artifact_id: ${{ steps.version.outputs.artifact_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java ${{ inputs.java_version }}
+        # TODO: pin to SHA — gh release view v4 -R actions/setup-java --json tagName
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Configure Maven — Exchange + MuleSoft EE repositories
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.connected_app_client_id }}
+          exchange_client_secret: ${{ secrets.connected_app_client_secret }}
+
+      - name: Resolve coordinates from pom.xml
+        id: version
+        run: |
+          RAW_VERSION=$(mvn help:evaluate \
+            -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          RELEASE_VERSION="${RAW_VERSION%-SNAPSHOT}"
+          ARTIFACT_ID=$(mvn help:evaluate \
+            -Dexpression=project.artifactId -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          # groupId == Anypoint BG UUID in pom.xml — no need to pass it from the caller.
+          GROUP_ID=$(mvn help:evaluate \
+            -Dexpression=project.groupId -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=${ARTIFACT_ID}"         >> "$GITHUB_OUTPUT"
+          echo "bg_id=${GROUP_ID}"                  >> "$GITHUB_OUTPUT"
+          echo "Release version: ${RELEASE_VERSION}, BG: ${GROUP_ID}"
+
+      - name: Set POM version to release (no backup files)
+        run: |
+          mvn versions:set \
+            -DnewVersion="${{ steps.version.outputs.release_version }}" \
+            -DgenerateBackupFiles=false \
+            --no-transfer-progress --batch-mode
+
+      - name: Build and publish to Exchange
+        run: |
+          mvn deploy -P deploy-to-exchange-v3 \
+            -DorganizationId="${{ steps.version.outputs.bg_id }}" \
+            --no-transfer-progress --batch-mode
+        # -DorganizationId is read from pom.xml project.groupId (the BG UUID).
+        # Single source of truth: change the groupId in pom.xml, the deploy target follows.
+
+      - name: Upload Mule JAR as GitHub Actions artifact (binary promotion)
+        if: ${{ inputs.upload_artifact }}
+        # TODO: pin to SHA — gh release view v4 -R actions/upload-artifact --json tagName
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          # Mule Maven plugin packages to target/<artifactId>-<version>-mule-application.jar
+          path: |
+            target/*-mule-application.jar
+          if-no-files-found: warn
+          retention-days: 7
