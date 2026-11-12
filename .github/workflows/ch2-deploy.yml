@@ -41,6 +41,14 @@ on:
         description: 'CloudHub 2.0 application name (lowercase, ≤ 42 chars).'
         type: string
         required: true
+      ch2_target:
+        description: >
+          CloudHub 2.0 Fabric / Space name as shown in Anypoint Runtime Manager
+          → CloudHub 2.0 → Target column. Examples: "Cloudhub US East 1",
+          "Cloudhub EU West 1", or a private space name.
+          TO CONFIRM: check the Target column in your Anypoint org.
+        type: string
+        required: true
       replicas:
         description: 'Number of replicas.'
         type: string
@@ -144,6 +152,7 @@ jobs:
             -Ddeployment.name="${{ inputs.app_name }}" \
             -Dbg.id="${{ inputs.bg_id }}" \
             -Dch2.environment="${{ inputs.anypoint_env }}" \
+            -Dapp.target="${{ inputs.ch2_target }}" \
             -Dapp.replicas="${{ inputs.replicas }}" \
             -Dapp.vcores="${{ inputs.vcores }}" \
             -Dapp.runtime="${{ inputs.mule_runtime }}" \
