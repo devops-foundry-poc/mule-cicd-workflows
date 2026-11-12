@@ -104,6 +104,7 @@ jobs:
         with:
           exchange_client_id: ${{ secrets.connected_app_client_id }}
           exchange_client_secret: ${{ secrets.connected_app_client_secret }}
+          github_token: ${{ github.token }}
 
       # Download the JAR built by the exchange-publish step (binary promotion).
       # When artifact_run_id is provided (workflow_run trigger pattern), the JAR

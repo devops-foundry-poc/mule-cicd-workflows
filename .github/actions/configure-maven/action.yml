@@ -15,6 +15,14 @@ inputs:
   exchange_client_secret:
     description: 'Connected App client secret.'
     required: true
+  github_token:
+    description: >
+      GITHUB_TOKEN for resolving the parent POM from GitHub Packages
+      (mule-shared-assets). Pass secrets.GITHUB_TOKEN from the calling workflow.
+      If omitted the github server entry is written with an empty password —
+      resolution will fail for packages that require authentication.
+    required: false
+    default: ''
   # MuleSoft EE Nexus credentials — reserved for future use when an EE licence is available.
   # Add mulesoft_ee_username / mulesoft_ee_password inputs here and a matching <server> block
   # in the settings below once the credentials are obtained via Salesforce service request.
@@ -27,11 +35,13 @@ runs:
       env:
         EXCHANGE_CLIENT_ID: ${{ inputs.exchange_client_id }}
         EXCHANGE_CLIENT_SECRET: ${{ inputs.exchange_client_secret }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
         import os
 
-        cid  = os.environ["EXCHANGE_CLIENT_ID"]
-        csec = os.environ["EXCHANGE_CLIENT_SECRET"]
+        cid        = os.environ["EXCHANGE_CLIENT_ID"]
+        csec       = os.environ["EXCHANGE_CLIENT_SECRET"]
+        github_tok = os.environ.get("GITHUB_TOKEN", "")
 
         # Exchange password format: <client_id>~?~<client_secret>
         exchange_password = f"{cid}~?~{csec}"
@@ -43,6 +53,11 @@ runs:
               <id>anypoint-exchange-v3</id>
               <username>~~~Client~~~</username>
               <password>{exchange_password}</password>
+            </server>
+            <server>
+              <id>github</id>
+              <username>x-access-token</username>
+              <password>{github_tok}</password>
             </server>
             <!-- mulesoft-ee-releases: add <server> here when EE licence is available -->
           </servers>
