@@ -1,23 +1,18 @@
-# Reusable workflow: publish a Mule application to Anypoint Exchange for one region.
-# The POM groupId is set to the regional BG UUID so CH2 can find the asset
-# by businessGroupId during deployment.
-#
-# Caller passes the BG UUID as region_bg_id — the workflow handles the
-# groupId alignment internally. No pom.xml manipulation leaks into the caller.
+# Reusable workflow: publish a Mule application to Anypoint Exchange.
+# The pom.xml groupId must already be the target BG UUID — the caller is
+# responsible for ensuring the app pom has the correct groupId.
+# No pom.xml modification is done here.
 name: Exchange Publish Regional (reusable)
 
 on:
   workflow_call:
     inputs:
       region_bg_id:
-        description: >
-          Anypoint BG UUID for the target region (e.g. vars.EMEA_BG_ID).
-          Used as the Exchange publish organization AND as pom.xml <groupId>
-          so CH2 can find the Exchange asset by businessGroupId.
+        description: 'Anypoint BG UUID. Used as -DexchangeGroupId for the Maven deploy.'
         type: string
         required: true
       artifact_name:
-        description: 'Name for the GitHub Actions artifact (must be unique per region).'
+        description: 'Name for the GitHub Actions artifact.'
         type: string
         default: 'mule-app'
       java_version:
@@ -26,12 +21,10 @@ on:
     secrets:
       connected_app_client_id:
         required: true
-        description: 'Connected App with Exchange Contributor scope on the target BG.'
       connected_app_client_secret:
         required: true
       gh_token:
         required: false
-        description: 'GitHub token for GitHub Packages parent POM resolution.'
     outputs:
       release_version:
         description: 'Published release version (SNAPSHOT stripped).'
@@ -44,7 +37,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish to Exchange (${{ inputs.region_bg_id }})
+    name: Publish to Exchange
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
@@ -77,26 +70,6 @@ jobs:
           $MVN versions:set -DnewVersion="${VERSION}" \
             -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
           echo "release_version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Align pom.xml groupId to target BG
-        run: |
-          # The pom.xml groupId must match the Exchange BG UUID so CH2 can
-          # look up the asset by businessGroupId during deployment.
-          #
-          # IMPORTANT: use Maven to read project.groupId — this skips the <parent>
-          # block. grep-based approaches find the parent's <groupId> first and
-          # would corrupt the parent reference, breaking parent POM resolution.
-          CURRENT=$($MVN help:evaluate -Dexpression=project.groupId -q -DforceStdout \
-            --no-transfer-progress --batch-mode)
-          TARGET="${{ inputs.region_bg_id }}"
-          if [ "$CURRENT" != "$TARGET" ]; then
-            # Replace project <groupId> without touching the <parent> block.
-            # Single-line python3 -c avoids YAML indentation issues with multi-line scripts.
-            python3 -c "import re,sys;d=open('pom.xml').read();p=re.search(r'<parent>.*?</parent>',d,re.DOTALL);m=d.replace(p.group(0),'__P__') if p else d;m=m.replace('<groupId>'+sys.argv[1]+'</groupId>','<groupId>'+sys.argv[2]+'</groupId>',1);d=m.replace('__P__',p.group(0)) if p else m;open('pom.xml','w').write(d)" "$CURRENT" "$TARGET"
-            echo "groupId: ${CURRENT} → ${TARGET}"
-          else
-            echo "groupId already ${TARGET}"
-          fi
 
       - name: Build and publish to Exchange
         run: |
