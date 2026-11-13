@@ -82,11 +82,33 @@ jobs:
         run: |
           # The pom.xml groupId must match the Exchange BG UUID so CH2 can
           # look up the asset by businessGroupId during deployment.
-          # Read the current groupId and replace it with the target BG UUID.
-          CURRENT=$(grep -m1 '<groupId>' pom.xml | sed 's|.*<groupId>\(.*\)</groupId>.*|\1|')
+          #
+          # IMPORTANT: use Maven to read project.groupId — this skips the <parent>
+          # block. grep-based approaches find the parent's <groupId> first and
+          # would corrupt the parent reference, breaking parent POM resolution.
+          CURRENT=$($MVN help:evaluate -Dexpression=project.groupId -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
           TARGET="${{ inputs.region_bg_id }}"
           if [ "$CURRENT" != "$TARGET" ]; then
-            sed -i "s|<groupId>${CURRENT}</groupId>|<groupId>${TARGET}</groupId>|" pom.xml
+            # Replace only the project's own <groupId> (outside <parent> block).
+            python3 - "$CURRENT" "$TARGET" << 'PYEOF'
+            import re, sys
+            current, target = sys.argv[1], sys.argv[2]
+            with open('pom.xml') as f:
+                content = f.read()
+            # Temporarily mask the <parent> block so its <groupId> is not touched
+            parent = re.search(r'<parent>.*?</parent>', content, re.DOTALL)
+            if parent:
+                masked = content.replace(parent.group(0), '__PARENT_BLOCK__')
+                masked = masked.replace(f'<groupId>{current}</groupId>',
+                                        f'<groupId>{target}</groupId>', 1)
+                content = masked.replace('__PARENT_BLOCK__', parent.group(0))
+            else:
+                content = content.replace(f'<groupId>{current}</groupId>',
+                                          f'<groupId>{target}</groupId>', 1)
+            with open('pom.xml', 'w') as f:
+                f.write(content)
+            PYEOF
             echo "groupId: ${CURRENT} → ${TARGET}"
           else
             echo "groupId already ${TARGET}"
