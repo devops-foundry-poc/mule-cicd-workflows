@@ -90,25 +90,9 @@ jobs:
             --no-transfer-progress --batch-mode)
           TARGET="${{ inputs.region_bg_id }}"
           if [ "$CURRENT" != "$TARGET" ]; then
-            # Replace only the project's own <groupId> (outside <parent> block).
-            # Uses python3 -c to avoid heredoc indentation issues in GitHub Actions YAML.
-            python3 -c "
-import re, sys
-current, target = sys.argv[1], sys.argv[2]
-with open('pom.xml') as f:
-    content = f.read()
-parent = re.search(r'<parent>.*?</parent>', content, re.DOTALL)
-if parent:
-    masked = content.replace(parent.group(0), '__PARENT_BLOCK__')
-    masked = masked.replace('<groupId>' + current + '</groupId>',
-                            '<groupId>' + target + '</groupId>', 1)
-    content = masked.replace('__PARENT_BLOCK__', parent.group(0))
-else:
-    content = content.replace('<groupId>' + current + '</groupId>',
-                              '<groupId>' + target + '</groupId>', 1)
-with open('pom.xml', 'w') as f:
-    f.write(content)
-" "$CURRENT" "$TARGET"
+            # Replace project <groupId> without touching the <parent> block.
+            # Single-line python3 -c avoids YAML indentation issues with multi-line scripts.
+            python3 -c "import re,sys;d=open('pom.xml').read();p=re.search(r'<parent>.*?</parent>',d,re.DOTALL);m=d.replace(p.group(0),'__P__') if p else d;m=m.replace('<groupId>'+sys.argv[1]+'</groupId>','<groupId>'+sys.argv[2]+'</groupId>',1);d=m.replace('__P__',p.group(0)) if p else m;open('pom.xml','w').write(d)" "$CURRENT" "$TARGET"
             echo "groupId: ${CURRENT} → ${TARGET}"
           else
             echo "groupId already ${TARGET}"
