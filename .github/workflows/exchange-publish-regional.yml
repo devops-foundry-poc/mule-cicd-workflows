@@ -1,0 +1,107 @@
+# Reusable workflow: publish a Mule application to Anypoint Exchange for one region.
+# The POM groupId is set to the regional BG UUID so CH2 can find the asset
+# by businessGroupId during deployment.
+#
+# Caller passes the BG UUID as region_bg_id — the workflow handles the
+# groupId alignment internally. No pom.xml manipulation leaks into the caller.
+name: Exchange Publish Regional (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      region_bg_id:
+        description: >
+          Anypoint BG UUID for the target region (e.g. vars.EMEA_BG_ID).
+          Used as the Exchange publish organization AND as pom.xml <groupId>
+          so CH2 can find the Exchange asset by businessGroupId.
+        type: string
+        required: true
+      artifact_name:
+        description: 'Name for the GitHub Actions artifact (must be unique per region).'
+        type: string
+        default: 'mule-app'
+      java_version:
+        type: string
+        default: '17'
+    secrets:
+      connected_app_client_id:
+        required: true
+        description: 'Connected App with Exchange Contributor scope on the target BG.'
+      connected_app_client_secret:
+        required: true
+      gh_token:
+        required: false
+        description: 'GitHub token for GitHub Packages parent POM resolution.'
+    outputs:
+      release_version:
+        description: 'Published release version (SNAPSHOT stripped).'
+        value: ${{ jobs.publish.outputs.release_version }}
+
+permissions:
+  contents: read
+  packages: read
+  actions: write
+
+jobs:
+  publish:
+    name: Publish to Exchange (${{ inputs.region_bg_id }})
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Java ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Configure Maven
+        uses: devops-foundry-poc/mule-cicd-workflows/.github/actions/configure-maven@main
+        with:
+          exchange_client_id: ${{ secrets.connected_app_client_id }}
+          exchange_client_secret: ${{ secrets.connected_app_client_secret }}
+          github_token: ${{ secrets.gh_token }}
+
+      - name: Set release version (MAJOR.MINOR.run_number)
+        id: version
+        run: |
+          BASE=$($MVN help:evaluate -Dexpression=project.version -q -DforceStdout \
+            --no-transfer-progress --batch-mode)
+          MAJOR_MINOR=$(echo "${BASE%-SNAPSHOT}" | cut -d. -f1,2)
+          VERSION="${MAJOR_MINOR}.${{ github.run_number }}"
+          $MVN versions:set -DnewVersion="${VERSION}" \
+            -DgenerateBackupFiles=false --no-transfer-progress --batch-mode
+          echo "release_version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Align pom.xml groupId to target BG
+        run: |
+          # The pom.xml groupId must match the Exchange BG UUID so CH2 can
+          # look up the asset by businessGroupId during deployment.
+          # Read the current groupId and replace it with the target BG UUID.
+          CURRENT=$(grep -m1 '<groupId>' pom.xml | sed 's|.*<groupId>\(.*\)</groupId>.*|\1|')
+          TARGET="${{ inputs.region_bg_id }}"
+          if [ "$CURRENT" != "$TARGET" ]; then
+            sed -i "s|<groupId>${CURRENT}</groupId>|<groupId>${TARGET}</groupId>|" pom.xml
+            echo "groupId: ${CURRENT} → ${TARGET}"
+          else
+            echo "groupId already ${TARGET}"
+          fi
+
+      - name: Build and publish to Exchange
+        run: |
+          $MVN deploy -P deploy-to-exchange-v3 \
+            -DexchangeGroupId=${{ inputs.region_bg_id }} \
+            --no-transfer-progress --batch-mode
+
+      - name: Upload Mule JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: target/*-mule-application.jar
+          if-no-files-found: error
+          retention-days: 7
